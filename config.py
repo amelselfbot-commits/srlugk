@@ -71,6 +71,19 @@ class Config:
         if not cls.SUPABASE_KEY: e.append("SUPABASE_KEY")
         return e
 
+    @classmethod
+    def validate_polling(cls):
+        """اعتبارسنجی برای حالت Polling — بدون نیاز به WEBHOOK_BASE_URL"""
+        e = []
+        if not cls.API_ID: e.append("API_ID")
+        if not cls.API_HASH or len(cls.API_HASH) != 32: e.append("API_HASH")
+        if not cls.BOT_TOKEN or ":" not in cls.BOT_TOKEN: e.append("BOT_TOKEN")
+        if not cls.ADMIN_IDS: e.append("ADMIN_IDS")
+        if len(cls.ENCRYPTION_KEY) != 32: e.append("ENCRYPTION_KEY")
+        if not cls.SUPABASE_URL or not cls.SUPABASE_URL.startswith("https://"): e.append("SUPABASE_URL")
+        if not cls.SUPABASE_KEY: e.append("SUPABASE_KEY")
+        return e
+
 
 for f in [Config.SESSION_DIR, Config.PROXY_DIR, Config.LOG_DIR, Config.PROXY_DIR / "warp_pool"]:
     f.mkdir(parents=True, exist_ok=True)

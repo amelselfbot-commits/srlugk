@@ -1,13 +1,18 @@
-"""نقطه ورود ربات — aiogram 3 polling / Python 3.11"""
+"""نقطه ورود ربات — aiogram 3 webhook / Python 3.14"""
 import asyncio
 import logging
 import sys
 from pathlib import Path
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.webhook.aiohttp_server import (
+    SimpleRequestHandler,
+    setup_application,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import Config
@@ -32,8 +37,6 @@ storage = MemoryStorage()
 dp      = Dispatcher(storage=storage)
 register_handlers(dp)
 
-_bg_tasks: set = set()
-
 
 # ── watchdog: Group Listener ───────────────────────────
 async def group_listener_watchdog():
@@ -51,7 +54,38 @@ async def group_listener_watchdog():
         await asyncio.sleep(30)
 
 
-# ── boot در پس‌زمینه: pool و listener بعد از شروع polling ──
+# ── webhook ────────────────────────────────────────────
+def _webhook_url() -> str:
+    return f"{Config.WEBHOOK_BASE_URL}{Config.WEBHOOK_PATH}"
+
+
+async def register_webhook(drop_pending: bool = False):
+    """همیشه ثبت می‌کنه. تلگرام secret_token رو برنمی‌گردونه، پس نمیشه فهمید عوض شده یا نه."""
+    kwargs = dict(url=_webhook_url(), drop_pending_updates=drop_pending)
+    if Config.WEBHOOK_SECRET:
+        kwargs["secret_token"] = Config.WEBHOOK_SECRET
+    await bot.set_webhook(**kwargs)
+    log.info(f"🔗 Webhook ثبت شد: {_webhook_url()}")
+
+
+async def webhook_watchdog():
+    """اگه webhook از بیرون پاک یا عوض بشه (مثلاً instance قدیمی موقع دیپلوی) دوباره ثبتش می‌کنه."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            info = await bot.get_webhook_info()
+            if info.url != _webhook_url():
+                log.warning(f"🔴 Webhook پاک/عوض شده بود ({info.url!r}) — ثبت مجدد")
+                await register_webhook()
+        except Exception as e:
+            log.warning(f"webhook watchdog: {type(e).__name__}: {e}")
+        await asyncio.sleep(120)
+
+
+_bg_tasks: set = set()
+
+
+# ── boot در پس‌زمینه: پورت زود باز میشه، اکانت‌ها بعدش وصل میشن ──
 async def boot_pool_and_listener():
     from core.pool import POOL
     try:
@@ -78,10 +112,9 @@ async def boot_pool_and_listener():
             log.exception(f"Group Listener: {e}")
     else:
         log.warning("⚠️ گروه هدف تنظیم نشده — ویو غیرفعال (بعد از تنظیم گروه، خودکار روشن میشه)")
-
-    t = asyncio.create_task(group_listener_watchdog())
-    _bg_tasks.add(t)
-    t.add_done_callback(_bg_tasks.discard)
+    # watchdog همیشه می‌چرخه تا گروهی که بعداً از ربات تنظیم میشه هم لیسنر بگیره
+    app_dp_task = asyncio.create_task(group_listener_watchdog())
+    _bg_tasks.add(app_dp_task)
 
     mn = db.get_setting("shift_min_sec", Config.SHIFT_MIN_SEC)
     mx = db.get_setting("shift_max_sec", Config.SHIFT_MAX_SEC)
@@ -94,7 +127,7 @@ async def boot_pool_and_listener():
                 f"🎯 گروه هدف: <code>{db.fmt_group(group_id)}</code>\n"
                 f"⏱️ شیفت: {int(mn)//60}-{int(mx)//60} دقیقه تصادفی\n"
                 f"✅ شیفت فعال: {POOL.active_shift}\n"
-                f"📡 حالت: Polling",
+                f"🌐 Webhook: {_webhook_url()}",
             )
         except Exception as e:
             log.warning(f"admin {admin_id}: {e}")
@@ -102,7 +135,7 @@ async def boot_pool_and_listener():
 
 
 # ── startup ────────────────────────────────────────────
-async def on_startup():
+async def on_startup(app: web.Application):
     errs = Config.validate()
     if errs:
         for e in errs:
@@ -113,21 +146,23 @@ async def on_startup():
     db.migrate_shifts()
     db.debug_log("main", "startup", "OK", Config.BOT_NAME)
 
-    # webhook قبلی رو پاک کن تا با polling تداخل نداشته باشه
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        log.info("🧹 Webhook پاک شد — polling شروع میشه")
-    except Exception as e:
-        log.warning(f"delete_webhook: {e}")
-
-    asyncio.create_task(boot_pool_and_listener())
+    # webhook اول از همه، قبل از کار سنگین، تا ربات از همون ثانیه‌ی اول جواب بده
+    await register_webhook(drop_pending=True)
+    app["webhook_watchdog"] = asyncio.create_task(webhook_watchdog())
+    app["boot_task"]        = asyncio.create_task(boot_pool_and_listener())
 
 
 # ── shutdown ───────────────────────────────────────────
-async def on_shutdown():
+async def on_shutdown(app: web.Application):
     log.info("🛑 خاموش کردن...")
     for t in list(_bg_tasks):
         t.cancel()
+    for key in ("webhook_watchdog", "boot_task"):
+        t = app.get(key)
+        if t:
+            t.cancel()
+    # delete_webhook حذف شد — باعث می‌شد هر deploy نیاز به re-register داشته باشه
+    # webhook روی Render با URL ثابت نیازی به حذف نداره
 
     from core.listener import get_group_listener
     obj = get_group_listener()
@@ -152,21 +187,42 @@ async def on_shutdown():
     log.info("🛑 ربات خاموش شد")
 
 
-# ── entry point ────────────────────────────────────────
-async def main():
+# ── aiohttp app ────────────────────────────────────────
+async def health(request):
+    return web.Response(text="OK", status=200)
+
+
+def build_app() -> web.Application:
+    app = web.Application()
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    # health check برای Render
+    app.router.add_get("/", health)
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=Config.WEBHOOK_SECRET or None,
+    ).register(app, path=Config.WEBHOOK_PATH)
+
+    setup_application(app, dp, bot=bot)
+    return app
+
+
+if __name__ == "__main__":
+    import os as _os
+    # Render متغیر PORT رو خودش ست می‌کنه — اولویت با اون
+    _port = int(_os.environ.get("PORT", Config.WEBHOOK_PORT))
     print(f"""
 ╔══════════════════════════════════════╗
 ║      🤖 {Config.BOT_NAME}
 ║      ادمین‌ها: {Config.ADMIN_IDS}
-║      حالت: Polling
+║      پورت: {_port}
 ╚══════════════════════════════════════╝
     """)
-
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(
+        build_app(),
+        host="0.0.0.0",
+        port=_port,
+    )
