@@ -1,4 +1,4 @@
-﻿# ── core ──────────────────────────────────────────────
+# ── core ──────────────────────────────────────────────
 telethon==1.36.0
 aiohttp>=3.9.0,<3.15
 python-dotenv==1.0.1
@@ -12,4 +12,3 @@ supabase>=2.9.0
 pydantic==2.13.5
 pydantic-core==2.46.5
 aiogram==3.31.0
- python-telegram-bot
