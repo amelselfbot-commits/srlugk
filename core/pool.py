@@ -53,26 +53,16 @@ class ClientPool:
         return max(1, min(n, 20))
 
     def set_num_shifts(self, n: int):
-        """تعداد شیفت‌ها رو تغییر میده و pool رو rebuild میکنه."""
+        """تعداد شیفت‌ها رو تغییر میده و همه اکانت‌ها رو round-robin توزیع مجدد میکنه."""
         n = max(1, min(n, 20))
         self.num_shifts = n
         db.set_setting("num_shifts", n)
-        # buckets جدید بساز — اکانت‌های اضافه رو به کم‌جمعیت‌ترین شیفت بده
+        # توزیع round-robin همه اکانت‌ها روی شیفت‌های جدید
         new_buckets = {i: [] for i in range(1, n + 1)}
-        for phone in self.all_phones:
-            # پیدا کردن شیفت قبلی از self.shifts
-            old_shift = None
-            for sh, phones in self.shifts.items():
-                if phone in phones:
-                    old_shift = sh
-                    break
-            if old_shift and old_shift <= n:
-                new_buckets[old_shift].append(phone)
-            else:
-                # اکانت‌های بیرون از بازه → کم‌جمعیت‌ترین
-                k = min(new_buckets, key=lambda x: len(new_buckets[x]))
-                new_buckets[k].append(phone)
-                db.update_account_shift(phone, str(k))
+        for i, phone in enumerate(self.all_phones):
+            target = (i % n) + 1
+            new_buckets[target].append(phone)
+            db.update_account_shift(phone, str(target))
         self.shifts = new_buckets
         # active_shift رو اصلاح کن اگه از محدوده خارج شد
         if self.active_shift not in (0, *range(1, n + 1)):
