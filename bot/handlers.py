@@ -20,6 +20,7 @@ from bot.keyboards import (
     cancel_menu, view_toggle_menu, shift_select_menu, shift_timing_menu,
     use_members_menu, num_shifts_menu,
     forced_join_menu, forced_join_settings_menu,
+    add_method_menu,
 )
 from bot.states import AddAccount, SetShiftTiming, SetGroup, UseMembers
 
@@ -1557,13 +1558,12 @@ async def cb_accounts(cb: types.CallbackQuery, state: FSMContext):
             )
 
     elif action == "add":
-        await state.set_state(AddAccount.waiting_phone)
-        await cb.answer("✅ شماره رو بفرست")
+        await cb.answer()
         await cb.message.answer(
-            "➕ <b>افزودن اکانت جدید</b>\n\n"
-            "شماره رو با فرمت بین‌المللی بفرست:\n"
-            "<code>+989123456789</code>",
-            reply_markup=cancel_menu(),
+            "➕ <b>افزودن اکانت جدید</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "روش افزودن رو انتخاب کن:",
+            reply_markup=add_method_menu(),
             parse_mode="HTML",
         )
 
@@ -1717,6 +1717,134 @@ async def cb_confirm(cb: types.CallbackQuery):
 
 
 # ─────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
+# Callback: انتخاب روش افزودن اکانت
+# ─────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("add:method:"))
+async def cb_add_method(cb: types.CallbackQuery, state: FSMContext):
+    if not await guard_admin(cb.message): return
+    method = cb.data.split(":")[2]
+
+    if method == "phone":
+        await state.set_state(AddAccount.waiting_phone)
+        group_id = _get_group_id()
+        await cb.message.edit_text(
+            "➕ <b>افزودن با شماره</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "شماره رو با فرمت بین\u200cالمللی بفرست:\n"
+            "<code>+989123456789</code>\n\n"
+            f"💡 اکانت خودکار عضو گروه می\u200cشه: <code>{db.fmt_group(group_id)}</code>",
+            reply_markup=cancel_menu(),
+            parse_mode="HTML",
+        )
+        await cb.answer()
+
+    elif method == "session":
+        await state.set_state(AddAccount.waiting_session)
+        await cb.message.edit_text(
+            "🔑 <b>افزودن با String Session</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "String Session اکانتت رو بفرست.\n\n"
+            "⚠️ سشن باید با <code>API_ID</code> و <code>API_HASH</code> همین بات ساخته شده باشه.",
+            reply_markup=cancel_menu(),
+            parse_mode="HTML",
+        )
+        await cb.answer()
+
+    else:
+        await cb.answer("❌ روش ناشناخته", show_alert=True)
+
+
+@router.message(StateFilter(AddAccount.waiting_session))
+async def add_session(msg: types.Message, state: FSMContext):
+    if not await guard_admin(msg): return
+    raw_session = (msg.text or "").strip()
+    if not raw_session or len(raw_session) < 50:
+        await msg.answer("❌ سشن معتبر نیست. دوباره بفرست یا انصراف بزن.")
+        return
+
+    await msg.answer("⏳ در حال بررسی و اتصال سشن...", parse_mode="HTML")
+    c = None
+    try:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+        c = TelegramClient(StringSession(raw_session), Config.API_ID, Config.API_HASH)
+        await asyncio.wait_for(c.connect(), timeout=20)
+
+        if not await c.is_user_authorized():
+            await msg.answer(
+                "❌ <b>سشن منقضی یا نامعتبر است.</b>\n\n"
+                "اکانت لاگ\u200cاوت شده یا سشن اشتباهه.",
+                parse_mode="HTML",
+            )
+            await c.disconnect()
+            await state.clear()
+            return
+
+        me    = await c.get_me()
+        phone = getattr(me, "phone", None)
+        if phone and not phone.startswith("+"):
+            phone = "+" + phone
+        phone_key = phone or f"id:{me.id}"
+
+        try:
+            exists = db.get_account(phone_key)
+        except Exception:
+            exists = None
+
+        if exists:
+            await msg.answer(
+                f"⚠️ این اکانت (<code>{phone_key}</code>) قبلاً ثبت شده.",
+                parse_mode="HTML",
+            )
+            await c.disconnect()
+            await state.clear()
+            return
+
+        await _join_group(c)
+        ss = c.session.save()
+        await c.disconnect()
+
+        acc_id = db.add_account(phone_key, ss)
+
+        pool_ok = False
+        try:
+            from core.pool import POOL
+            pool_ok = await asyncio.wait_for(POOL.add_account_live(phone_key), timeout=40) is not None
+        except Exception as _pe:
+            db.debug_log("handlers", "pool_add_session", "WARN", f"{type(_pe).__name__}: {_pe}")
+
+        await msg.answer(
+            f"✅ <b>اکانت با سشن اضافه شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 نام: <b>{me.first_name}</b>\n"
+            f"🆔 یوزرنیم: @{me.username or 'ندارد'}\n"
+            f"📱 شماره: <code>{phone or 'ناشناس'}</code>\n"
+            f"🎫 شناسه: <code>{acc_id}</code>\n"
+            f"👥 عضو گروه: ✅\n"
+            f"🔌 اتصال به pool: {'✅' if pool_ok else '⚠️ بعداً خودکار وصل میشه'}",
+            reply_markup=main_menu(),
+            parse_mode="HTML",
+        )
+        await state.clear()
+
+    except asyncio.TimeoutError:
+        await msg.answer("❌ <b>Timeout</b>\nسرور تلگرام پاسخ نداد.", parse_mode="HTML")
+        if c:
+            try: await c.disconnect()
+            except Exception: pass
+        await state.clear()
+    except Exception as e:
+        await msg.answer(
+            f"❌ <b>خطا در اتصال سشن</b>:\n<code>{str(e)[:200]}</code>",
+            parse_mode="HTML",
+        )
+        if c:
+            try: await c.disconnect()
+            except Exception: pass
+        await state.clear()
+
+
 # FSM: افزودن اکانت
 # ─────────────────────────────────────────────────────────
 async def _join_group(client):
@@ -1923,8 +2051,9 @@ async def _on_error(event: types.ErrorEvent):
 from aiogram.fsm.state import State, StatesGroup
 
 class _VGState(StatesGroup):
-    waiting_daily_quota = State()
-    waiting_gap         = State()
+    waiting_daily_quota  = State()
+    waiting_gap          = State()
+    waiting_start_delay  = State()
 
 
 # ─────────────────────────────────────────────────────────
@@ -2023,6 +2152,20 @@ async def cb_viewguard(cb: types.CallbackQuery, state: FSMContext):
         await cb.answer()
         return
 
+    elif action == "set_start_delay":
+        cur_delay = float(db.get_setting("view_start_delay", 0) or 0)
+        await cb.message.edit_text(
+            f"⏰ <b>تاخیر شروع ویو</b>\n\n"
+            f"فعلی: <b>{cur_delay:.0f} ثانیه</b>\n\n"
+            "تعداد ثانیه تاخیر رو بفرست (صفر = بدون تاخیر):\n"
+            "مثال: <code>3</code>  یا  <code>0</code>",
+            reply_markup=cancel_menu(),
+            parse_mode="HTML",
+        )
+        await state.set_state(_VGState.waiting_start_delay)
+        await cb.answer()
+        return
+
     try:
         await cb.answer()
     except Exception:
@@ -2064,6 +2207,29 @@ async def vg_set_gap(msg: types.Message, state: FSMContext):
     db.set_setting("vg_max_gap", mx)
     await msg.answer(
         f"✅ فاصله ویو تنظیم شد: <b>{mn}-{mx} ثانیه</b>",
+        reply_markup=main_menu(), parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.message(StateFilter(_VGState.waiting_start_delay))
+async def vg_set_start_delay(msg: types.Message, state: FSMContext):
+    if not await guard(msg): return
+    raw = (msg.text or "").strip().translate(_FA_DIGITS)
+    if not raw.isdigit():
+        await msg.answer("❌ عدد معتبر وارد کن (مثال: <code>3</code> یا <code>0</code>)", parse_mode="HTML")
+        return
+    seconds = int(raw)
+    if seconds < 0 or seconds > 300:
+        await msg.answer("❌ بین صفر تا ۳۰۰ ثانیه وارد کن.", parse_mode="HTML")
+        return
+    db.set_setting("view_start_delay", seconds)
+    if seconds == 0:
+        label = "بدون تاخیر (فوری)"
+    else:
+        label = f"{seconds} ثانیه"
+    await msg.answer(
+        f"✅ تاخیر شروع ویو تنظیم شد: <b>{label}</b>",
         reply_markup=main_menu(), parse_mode="HTML",
     )
     await state.clear()

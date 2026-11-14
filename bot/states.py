@@ -5,6 +5,7 @@ class AddAccount(StatesGroup):
     waiting_phone    = State()
     waiting_code     = State()
     waiting_password = State()
+    waiting_session  = State()   # افزودن با string session
 
 
 class SetShiftTiming(StatesGroup):

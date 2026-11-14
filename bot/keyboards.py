@@ -148,11 +148,12 @@ def settings_menu() -> InlineKeyboardMarkup:
 def viewguard_menu() -> InlineKeyboardMarkup:
     """منوی تنظیمات ViewGuard"""
     b = InlineKeyboardBuilder()
-    b.button(text="📊 آمار لحظه‌ای",      callback_data="vg:stats")
-    b.button(text="🔄 ریست آمار امروز",   callback_data="vg:reset")
-    b.button(text="⚙️ تنظیم سهمیه روزانه", callback_data="vg:set_daily")
-    b.button(text="⏳ تنظیم فاصله ویو",   callback_data="vg:set_gap")
-    b.button(text="🔙 برگشت",             callback_data="menu:settings")
+    b.button(text="📊 آمار لحظه‌ای",        callback_data="vg:stats")
+    b.button(text="🔄 ریست آمار امروز",     callback_data="vg:reset")
+    b.button(text="⚙️ تنظیم سهمیه روزانه",   callback_data="vg:set_daily")
+    b.button(text="⏳ تنظیم فاصله ویو",     callback_data="vg:set_gap")
+    b.button(text="⏰ تاخیر شروع ویو",     callback_data="vg:set_start_delay")
+    b.button(text="🔙 برگشت",               callback_data="menu:settings")
     b.adjust(2)
     return b.as_markup()
 
@@ -232,4 +233,14 @@ def confirm_menu(action: str) -> InlineKeyboardMarkup:
 def cancel_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="❌ انصراف", callback_data="add:cancel")
+    return b.as_markup()
+
+
+def add_method_menu() -> InlineKeyboardMarkup:
+    """انتخاب روش افزودن اکانت: شماره یا سشن"""
+    b = InlineKeyboardBuilder()
+    b.button(text="📱 افزودن با شماره",  callback_data="add:method:phone")
+    b.button(text="🔑 افزودن با سشن",    callback_data="add:method:session")
+    b.button(text="❌ انصراف",            callback_data="add:cancel")
+    b.adjust(1)
     return b.as_markup()

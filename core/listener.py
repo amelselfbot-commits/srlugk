@@ -160,6 +160,16 @@ class MultiTargetListener:
             # ═══ هر worker تمام شیفت فعال ═══
             phones = list(POOL.active_phones())
 
+            # تاخیر شروع ویو — قابل تنظیم از دیتابیس
+            try:
+                _view_start_delay = float(db.get_setting("view_start_delay", 0) or 0)
+            except Exception:
+                _view_start_delay = 0.0
+            if _view_start_delay > 0:
+                db.debug_log("listener", f"w{wid}", "DELAY",
+                             f"ID={msg_id} | تاخیر {_view_start_delay:.1f}s قبل شروع ویو")
+                await asyncio.sleep(_view_start_delay)
+
             try:
                 await self._view_message(msg_id, phones, wid)
             except Exception as e:
