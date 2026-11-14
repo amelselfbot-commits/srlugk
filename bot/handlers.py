@@ -596,7 +596,44 @@ async def cb_fj_settings(cb: types.CallbackQuery):
             f"⏰ تایم ترک گروه: <b>{leave_days} روز</b>\n"
             f"🔢 تعداد اکانت: <b>{'همه (' + str(total) + ')' if acc_count == 0 else str(acc_count)}</b>\n\n"
             f"👇 گزینه مورد نظر:",
-            reply_markup=forced_join_settings_menu(),
+            reply_markup=forced_join_settings_menu(
+                fwd_enabled=db.get_setting("fj_forward_enabled","0")=="1"),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "fj:toggle_forward")
+async def cb_fj_toggle_forward(cb: types.CallbackQuery):
+    from core.fj_forwarder import is_forward_enabled, FJ_FORWARDER
+    current = is_forward_enabled()
+    new_val = "0" if current else "1"
+    db.set_setting("fj_forward_enabled", new_val)
+    fwd_enabled = new_val == "1"
+    if fwd_enabled:
+        FJ_FORWARDER.start()
+        label = "✅ فوروارد فعال شد"
+    else:
+        FJ_FORWARDER.stop()
+        label = "❌ فوروارد غیرفعال شد"
+    await cb.answer(f"📤 {label}", show_alert=True)
+    enabled    = db.get_setting("fj_enabled", "0") == "1"
+    leave_days = int(db.get_setting("fj_leave_days", "1"))
+    acc_count  = int(db.get_setting("fj_acc_count", "0"))
+    total      = len(db.get_all_accounts())
+    status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
+    fwd_txt    = "✅ فعال" if fwd_enabled else "❌ غیرفعال"
+    try:
+        await cb.message.edit_text(
+            f"⚙️ <b>تنظیمات جوین اجباری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔛 وضعیت جوین: <b>{status_txt}</b>\n"
+            f"📤 فوروارد پست‌ها: <b>{fwd_txt}</b>\n"
+            f"⏰ تایم ترک گروه: <b>{leave_days} روز</b>\n"
+            f"🔢 تعداد اکانت: <b>{'همه (' + str(total) + ')' if acc_count == 0 else str(acc_count)}</b>\n\n"
+            f"👇 گزینه مورد نظر:",
+            reply_markup=forced_join_settings_menu(fwd_enabled=fwd_enabled),
             parse_mode="HTML",
         )
     except Exception:
@@ -1722,7 +1759,9 @@ async def cb_confirm(cb: types.CallbackQuery):
 # ─────────────────────────────────────────────────────────
 @router.callback_query(F.data.startswith("add:method:"))
 async def cb_add_method(cb: types.CallbackQuery, state: FSMContext):
-    if not await guard_admin(cb.message): return
+    if not is_admin(cb.from_user.id):
+        await cb.answer("⛔ دسترسی ندارید.", show_alert=True)
+        return
     method = cb.data.split(":")[2]
 
     if method == "phone":
@@ -1865,15 +1904,11 @@ async def _join_group(client):
 @router.message(F.text.in_({"➕ افزودن اکانت", "➕ افزودن", "➕ افزودن جدید"}))
 async def add_account_start(msg: types.Message, state: FSMContext):
     if not await guard_admin(msg): return
-    await state.set_state(AddAccount.waiting_phone)
-    group_id = _get_group_id()
     await msg.answer(
         "➕ <b>افزودن اکانت جدید</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "شماره رو با فرمت بین‌المللی بفرست:\n"
-        "<code>+989123456789</code>\n\n"
-        f"💡 اکانت خودکار عضو گروه می‌شه: <code>{db.fmt_group(group_id)}</code>",
-        reply_markup=cancel_menu(),
+        "روش افزودن رو انتخاب کن:",
+        reply_markup=add_method_menu(),
         parse_mode="HTML",
     )
 
