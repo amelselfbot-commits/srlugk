@@ -44,6 +44,11 @@ def init_db():
         "shift_max_sec":     str(Config.SHIFT_MAX_SEC),
         "active_shift":      "1",
         "auto_view_enabled": "1",
+        # ── جوین توی جوین اجباری ──
+        "fj_enabled":        "0",   # خاموش پیش‌فرض
+        "fj_leave_days":     "1",   # ۱ روز تا ترک
+        "fj_acc_count":      "0",   # 0 = همه اکانت‌ها
+        "fj_pending_leaves": "[]",  # صف ترک خودکار (JSON)
     }
     for key, value in defaults.items():
         sb.table("settings").upsert(

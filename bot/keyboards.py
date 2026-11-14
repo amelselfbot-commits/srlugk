@@ -17,23 +17,38 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 
 def use_members_menu() -> InlineKeyboardMarkup:
-    """منوی استفاده از ممبرها"""
+    """منوی استفاده از اکانت‌ها (بدون ربات ممبر گیر)"""
     b = InlineKeyboardBuilder()
-    b.button(text="🚀 استارت ربات",         callback_data="mem:start_bot")
-    b.button(text="👥 عضو شدن توی گروه",    callback_data="mem:join_group")
-    b.button(text="🤖 ربات ممبر گیر",       callback_data="mem:robot_member")
-    b.button(text="🔙 برگشت",               callback_data="menu:main")
+    b.button(text="🚀 استارت ربات",          callback_data="mem:start_bot")
+    b.button(text="👥 عضو شدن توی گروه",     callback_data="mem:join_group")
+    b.button(text="🔗 جوین توی جوین اجباری", callback_data="mem:forced_join")
+    b.button(text="🔙 برگشت",                callback_data="menu:main")
     b.adjust(1)
     return b.as_markup()
 
 
-def robot_member_menu() -> InlineKeyboardMarkup:
-    """منوی ربات ممبر گیر"""
+# ── جوین توی جوین اجباری ──────────────────────────────────────────────────────
+
+def forced_join_menu(enabled: bool) -> InlineKeyboardMarkup:
+    """منوی اصلی جوین توی جوین اجباری"""
     b = InlineKeyboardBuilder()
-    b.button(text="✅ عضویت",              callback_data="robmem:join")
-    b.button(text="💎 speedy — الماس",     callback_data="robmem:speedy")
-    b.button(text="🚪 ترک کردن",           callback_data="robmem:leave")
-    b.button(text="🔙 برگشت",             callback_data="robmem:back")
+    status_text = "✅ فعال" if enabled else "❌ غیرفعال"
+    b.button(text=f"▶️ اجرای جوین اجباری",   callback_data="fj:run")
+    b.button(text=f"⚙️ تنظیمات",              callback_data="fj:settings")
+    b.button(text=f"وضعیت: {status_text}",    callback_data="fj:toggle")
+    b.button(text="🔙 برگشت",                 callback_data="mem:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def forced_join_settings_menu() -> InlineKeyboardMarkup:
+    """منوی تنظیمات جوین توی جوین اجباری"""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔛 خاموش/روشن",               callback_data="fj:toggle")
+    b.button(text="⏰ تایم ترک گروه (به روز)",    callback_data="fj:set_leave_days")
+    b.button(text="🔢 تعداد اکانت برای عضویت",    callback_data="fj:set_acc_count")
+    b.button(text="🚪 ترک همه گروه‌ها/کانال‌ها",   callback_data="fj:leave_all")
+    b.button(text="🔙 برگشت",                     callback_data="fj:back")
     b.adjust(1)
     return b.as_markup()
 

@@ -18,7 +18,8 @@ from bot.keyboards import (
     main_menu, status_menu, accounts_menu, accounts_list_kb,
     stats_menu, settings_menu, group_menu, confirm_menu,
     cancel_menu, view_toggle_menu, shift_select_menu, shift_timing_menu,
-    use_members_menu, robot_member_menu, num_shifts_menu,
+    use_members_menu, num_shifts_menu,
+    forced_join_menu, forced_join_settings_menu,
 )
 from bot.states import AddAccount, SetShiftTiming, SetGroup, UseMembers
 
@@ -425,482 +426,6 @@ async def _check_group_join_task(cb: types.CallbackQuery, group_id):
 
 # ─────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────
-# 🤖 ربات ممبر گیر — عضویت و ترک لینک‌های ثابت
-# ─────────────────────────────────────────────────────────
-
-import re as _re
-
-# لینک‌های هدف
-_ROBOT_MEMBER_TARGETS = [
-    "@freeads_org",
-    "@cheallesh",
-    "@speedy_member",
-    "@linkdoney_ir",
-    "https://t.me/+i5E_rPJfYj1hZWM0",
-    "https://t.me/+itJEg-ElfM0xNzA0",
-    "https://t.me/+SR2UvPj5M31jZjhk",
-]
-
-# کانالی که دکمه‌هاش رو می‌زنیم
-_SPEEDY_CHANNEL = "@speedy_member"
-
-# تعداد پیام‌هایی که دکمه «عضویت» و «دریافت الماس» روشون می‌زنیم
-_SPEEDY_MSG_COUNT = 3
-
-
-@router.callback_query(F.data == "mem:robot_member")
-async def cb_robot_member_menu(cb: types.CallbackQuery):
-    await cb.answer()
-    total = len(db.get_all_accounts())
-    targets_text = "\n".join(f"  • <code>{t}</code>" for t in _ROBOT_MEMBER_TARGETS)
-    await cb.message.answer(
-        f"🤖 <b>ربات ممبر گیر</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 تعداد اکانت‌های موجود: <b>{total}</b>\n\n"
-        f"🎯 <b>لینک‌های هدف:</b>\n{targets_text}\n\n"
-        f"یه عملیات انتخاب کن:",
-        reply_markup=robot_member_menu(),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data == "robmem:back")
-async def cb_robmem_back(cb: types.CallbackQuery):
-    await cb.answer()
-    total = len(db.get_all_accounts())
-    await cb.message.answer(
-        f"🤖 <b>استفاده از ممبرها</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 تعداد اکانت‌های موجود: <b>{total}</b>\n\n"
-        f"یکی از عملیات‌ها رو انتخاب کن:",
-        reply_markup=use_members_menu(),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data == "robmem:join")
-async def cb_robmem_join(cb: types.CallbackQuery):
-    await cb.answer("⏳ شروع عضویت...")
-    await cb.message.answer(
-        "⏳ <b>شروع عضویت در لینک‌های هدف...</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        parse_mode="HTML",
-    )
-    asyncio.create_task(_robmem_join_task(cb))
-
-
-@router.callback_query(F.data == "robmem:leave")
-async def cb_robmem_leave(cb: types.CallbackQuery):
-    await cb.answer("⏳ شروع ترک کردن...")
-    await cb.message.answer(
-        "⏳ <b>شروع ترک لینک‌های هدف...</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        parse_mode="HTML",
-    )
-    asyncio.create_task(_robmem_leave_task(cb))
-
-
-@router.callback_query(F.data == "robmem:speedy")
-async def cb_robmem_speedy(cb: types.CallbackQuery):
-    await cb.answer("⏳ شروع عملیات speedy...")
-    await cb.message.answer(
-        "💎 <b>speedy — عضویت و دریافت الماس</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⏳ همه اکانت‌ها دارن دکمه‌های speedy_member رو می‌زنن...",
-        parse_mode="HTML",
-    )
-    asyncio.create_task(_robmem_speedy_task(cb))
-
-
-# ─── helpers ───
-
-async def _robmem_join_one_target(client, target: str) -> str:
-    """یه لینک رو join می‌کنه — برمی‌گردونه JOINED / ALREADY / ERR:..."""
-    from telethon import functions as tl_funcs
-    from telethon.errors import UserAlreadyParticipantError, FloodWaitError
-
-    invite_match = _re.search(r"(?:joinchat/|\+)([A-Za-z0-9_\-]+)", target)
-    try:
-        if invite_match:
-            hash_ = invite_match.group(1)
-            await asyncio.wait_for(
-                client(tl_funcs.messages.ImportChatInviteRequest(hash=hash_)),
-                timeout=20,
-            )
-        else:
-            username = target.lstrip("@").strip()
-            if username.startswith("https://t.me/"):
-                username = username.replace("https://t.me/", "").strip("/")
-            entity = await asyncio.wait_for(client.get_entity(username), timeout=10)
-            await asyncio.wait_for(
-                client(tl_funcs.channels.JoinChannelRequest(channel=entity)),
-                timeout=20,
-            )
-        return "JOINED"
-    except UserAlreadyParticipantError:
-        return "ALREADY"
-    except FloodWaitError as e:
-        await asyncio.sleep(min(e.seconds, 30))
-        return f"FLOOD:{e.seconds}"
-    except Exception as e:
-        return f"ERR:{type(e).__name__}"
-
-
-async def _robmem_leave_one_target(client, target: str) -> str:
-    """از یه کانال/گروه leave می‌کنه — برمی‌گردونه LEFT / NOT_MEMBER / ERR:..."""
-    from telethon import functions as tl_funcs
-    from telethon.errors import UserNotParticipantError
-
-    try:
-        invite_match = _re.search(r"(?:joinchat/|\+)([A-Za-z0-9_\-]+)", target)
-        if invite_match:
-            # برای invite link باید اول entity رو بگیریم
-            hash_ = invite_match.group(1)
-            # سعی می‌کنیم channel رو از طریق hash پیدا کنیم
-            try:
-                result = await asyncio.wait_for(
-                    client(tl_funcs.messages.CheckChatInviteRequest(hash=hash_)),
-                    timeout=10,
-                )
-                # اگه already عضو بودیم chat رو داریم
-                if hasattr(result, "chat"):
-                    entity = result.chat
-                else:
-                    return "NOT_MEMBER"
-            except Exception:
-                return "NOT_MEMBER"
-        else:
-            username = target.lstrip("@").strip()
-            if username.startswith("https://t.me/"):
-                username = username.replace("https://t.me/", "").strip("/")
-            entity = await asyncio.wait_for(client.get_entity(username), timeout=10)
-
-        await asyncio.wait_for(
-            client(tl_funcs.channels.LeaveChannelRequest(channel=entity)),
-            timeout=20,
-        )
-        return "LEFT"
-    except UserNotParticipantError:
-        return "NOT_MEMBER"
-    except Exception as e:
-        return f"ERR:{type(e).__name__}"
-
-
-async def _press_speedy_buttons(client) -> int:
-    """
-    توی کانال speedy_member آخرین _SPEEDY_MSG_COUNT پیام با دکمه رو پیدا می‌کنه.
-    برای هر پیام:
-      1. دکمه «عضویت» رو می‌زنه
-      2. لینکی که توی پاسخ اومد رو join می‌کنه
-      3. دکمه «دریافت الماس» رو می‌زنه
-    برمی‌گردونه تعداد پیام‌هایی که پردازش شدن.
-    """
-    from telethon import functions as tl_funcs
-
-    try:
-        channel = await asyncio.wait_for(
-            client.get_entity(_SPEEDY_CHANNEL), timeout=10
-        )
-    except Exception:
-        return 0
-
-    try:
-        messages = await asyncio.wait_for(
-            client.get_messages(channel, limit=30), timeout=15
-        )
-    except Exception:
-        return 0
-
-    button_msgs = [
-        m for m in messages
-        if m.reply_markup and hasattr(m.reply_markup, "rows")
-    ][:_SPEEDY_MSG_COUNT]
-
-    processed = 0
-    for msg in button_msgs:
-        try:
-            rows = msg.reply_markup.rows
-            all_btns = [btn for row in rows for btn in row.buttons]
-
-            join_btn = None
-            diamond_btn = None
-            for btn in all_btns:
-                txt = getattr(btn, "text", "") or ""
-                if any(k in txt for k in ("عضویت", "عضو", "join", "Join")):
-                    join_btn = btn
-                if any(k in txt for k in ("الماس", "diamond", "دریافت", "Diamond")):
-                    diamond_btn = btn
-
-            # زدن دکمه عضویت
-            if join_btn and getattr(join_btn, "data", None):
-                try:
-                    answer = await asyncio.wait_for(
-                        client(tl_funcs.messages.GetBotCallbackAnswerRequest(
-                            peer=channel,
-                            msg_id=msg.id,
-                            data=join_btn.data,
-                        )),
-                        timeout=15,
-                    )
-                    # اگه توی پاسخ لینک بود join کن
-                    if answer and getattr(answer, "url", None):
-                        url = answer.url
-                        inv = _re.search(r"(?:joinchat/|\+)([A-Za-z0-9_\-]+)", url)
-                        if inv:
-                            try:
-                                await asyncio.wait_for(
-                                    client(tl_funcs.messages.ImportChatInviteRequest(
-                                        hash=inv.group(1)
-                                    )),
-                                    timeout=20,
-                                )
-                            except Exception:
-                                pass
-                        elif "t.me/" in url:
-                            uname = url.split("t.me/")[-1].strip("/")
-                            try:
-                                ent = await asyncio.wait_for(
-                                    client.get_entity(uname), timeout=10
-                                )
-                                await asyncio.wait_for(
-                                    client(tl_funcs.channels.JoinChannelRequest(channel=ent)),
-                                    timeout=20,
-                                )
-                            except Exception:
-                                pass
-                    await asyncio.sleep(2)
-                except Exception:
-                    pass
-
-            # زدن دکمه دریافت الماس
-            if diamond_btn and getattr(diamond_btn, "data", None):
-                try:
-                    await asyncio.wait_for(
-                        client(tl_funcs.messages.GetBotCallbackAnswerRequest(
-                            peer=channel,
-                            msg_id=msg.id,
-                            data=diamond_btn.data,
-                        )),
-                        timeout=15,
-                    )
-                    await asyncio.sleep(2)
-                except Exception:
-                    pass
-
-            processed += 1
-        except Exception:
-            continue
-
-    return processed
-
-
-# ─── Join Task ───
-
-async def _robmem_join_task(cb: types.CallbackQuery):
-    from core.engine import make_client
-
-    accounts = db.get_all_accounts()
-    total = len(accounts)
-    ok = 0
-    fail = 0
-
-    status_msg = await cb.message.answer(
-        f"🔄 <b>عضویت در حال اجرا</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 کل اکانت‌ها: <b>{total}</b>\n"
-        f"⏳ در حال پردازش...",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(3)
-
-    async def process_account(acc):
-        nonlocal ok, fail
-        async with sem:
-            phone = acc["phone"]
-            client = make_client(db.get_session(phone), phone=phone)
-            acc_ok = True
-            try:
-                await asyncio.wait_for(client.connect(), timeout=20)
-                if not await client.is_user_authorized():
-                    await client.disconnect()
-                    fail += 1
-                    return
-
-                # عضویت در همه لینک‌ها
-                for target in _ROBOT_MEMBER_TARGETS:
-                    res = await _robmem_join_one_target(client, target)
-                    if res.startswith("ERR"):
-                        acc_ok = False
-                    await asyncio.sleep(2)
-
-                # زدن دکمه‌های speedy_member
-                await _press_speedy_buttons(client)
-
-                await client.disconnect()
-                if acc_ok:
-                    ok += 1
-                else:
-                    fail += 1
-
-            except Exception:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
-                fail += 1
-
-            await asyncio.sleep(3)
-
-    await asyncio.gather(*[process_account(a) for a in accounts])
-
-    try:
-        await status_msg.edit_text(
-            f"✅ <b>عضویت تموم شد</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ موفق: <b>{ok}</b>\n"
-            f"❌ ناموفق: <b>{fail}</b>\n"
-            f"👥 کل: <b>{total}</b>",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-
-
-# ─── Leave Task ───
-
-async def _robmem_leave_task(cb: types.CallbackQuery):
-    from core.engine import make_client
-
-    accounts = db.get_all_accounts()
-    total = len(accounts)
-    ok = 0
-    fail = 0
-
-    status_msg = await cb.message.answer(
-        f"🔄 <b>ترک در حال اجرا</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 کل اکانت‌ها: <b>{total}</b>\n"
-        f"⏳ در حال پردازش...",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(5)
-
-    async def leave_account(acc):
-        nonlocal ok, fail
-        async with sem:
-            phone = acc["phone"]
-            client = make_client(db.get_session(phone), phone=phone)
-            acc_ok = True
-            try:
-                await asyncio.wait_for(client.connect(), timeout=20)
-                if not await client.is_user_authorized():
-                    await client.disconnect()
-                    fail += 1
-                    return
-
-                for target in _ROBOT_MEMBER_TARGETS:
-                    res = await _robmem_leave_one_target(client, target)
-                    if res.startswith("ERR"):
-                        acc_ok = False
-                    await asyncio.sleep(1.5)
-
-                await client.disconnect()
-                if acc_ok:
-                    ok += 1
-                else:
-                    fail += 1
-
-            except Exception:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
-                fail += 1
-
-            await asyncio.sleep(2)
-
-    await asyncio.gather(*[leave_account(a) for a in accounts])
-
-    try:
-        await status_msg.edit_text(
-            f"✅ <b>ترک تموم شد</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ موفق: <b>{ok}</b>\n"
-            f"❌ ناموفق: <b>{fail}</b>\n"
-            f"👥 کل: <b>{total}</b>",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-
-
-# ─── Speedy Task ───
-
-async def _robmem_speedy_task(cb: types.CallbackQuery):
-    """همه اکانت‌ها رو می‌فرسته توی speedy_member تا دکمه عضویت و دریافت الماس رو بزنن"""
-    from core.engine import make_client
-
-    accounts = db.get_all_accounts()
-    total = len(accounts)
-    ok = 0
-    fail = 0
-
-    status_msg = await cb.message.answer(
-        f"🔄 <b>speedy — در حال اجرا</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 کل اکانت‌ها: <b>{total}</b>\n"
-        f"⏳ در حال پردازش...",
-        parse_mode="HTML",
-    )
-
-    sem = asyncio.Semaphore(3)
-
-    async def process_account(acc):
-        nonlocal ok, fail
-        async with sem:
-            phone = acc["phone"]
-            client = make_client(db.get_session(phone), phone=phone)
-            try:
-                await asyncio.wait_for(client.connect(), timeout=20)
-                if not await client.is_user_authorized():
-                    await client.disconnect()
-                    fail += 1
-                    return
-
-                pressed = await _press_speedy_buttons(client)
-                await client.disconnect()
-
-                if pressed > 0:
-                    ok += 1
-                else:
-                    fail += 1
-
-            except Exception:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
-                fail += 1
-
-            await asyncio.sleep(3)
-
-    await asyncio.gather(*[process_account(a) for a in accounts])
-
-    try:
-        await status_msg.edit_text(
-            f"✅ <b>speedy — تموم شد</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ موفق: <b>{ok}</b>\n"
-            f"❌ ناموفق: <b>{fail}</b>\n"
-            f"👥 کل: <b>{total}</b>",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-
-
 # 🤖 استفاده از ممبرها
 # ─────────────────────────────────────────────────────────
 
@@ -952,8 +477,422 @@ async def cb_use_members(cb: types.CallbackQuery, state: FSMContext):
         )
         await state.set_state(UseMembers.waiting_join_group_link)
 
+    elif action == "forced_join":
+        await cb.answer()
+        enabled = db.get_setting("fj_enabled", "0") == "1"
+        leave_days = int(db.get_setting("fj_leave_days", "1"))
+        acc_count  = int(db.get_setting("fj_acc_count", "0"))
+        total      = len(db.get_all_accounts())
+        status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
+        await cb.message.answer(
+            f"🔗 <b>جوین توی جوین اجباری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"وضعیت: <b>{status_txt}</b>\n"
+            f"⏰ تایم ترک: <b>{leave_days} روز</b>\n"
+            f"🔢 تعداد اکانت: <b>{'همه' if acc_count == 0 else acc_count}</b> از {total}\n\n"
+            f"با کلیک روی «اجرای جوین اجباری» همه اکانت‌ها\n"
+            f"توی گروه هدف پیام می‌دن، پیامشون حذف میشه\n"
+            f"و ربات @JOINEEJBARIBOT پیام عضویت اجباری میده.\n"
+            f"سپس اکانت‌ها عضو کانال‌های دکمه‌ای میشن و\n"
+            f"بعد از {leave_days} روز لف میدن.\n\n"
+            f"👇 گزینه مورد نظر:",
+            reply_markup=forced_join_menu(enabled),
+            parse_mode="HTML",
+        )
+
+    elif action == "back":
+        await cb.answer()
+        total = len(db.get_all_accounts())
+        await cb.message.answer(
+            f"🤖 <b>استفاده از ممبرها</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 تعداد اکانت‌های موجود: <b>{total}</b>\n\n"
+            f"یکی از عملیات‌ها رو انتخاب کن:",
+            reply_markup=use_members_menu(),
+            parse_mode="HTML",
+        )
+
     try:
         await cb.answer()
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────
+# 🔗 جوین توی جوین اجباری
+# ─────────────────────────────────────────────────────────
+
+from aiogram.fsm.state import State, StatesGroup as _SG
+
+
+class _FJState(_SG):
+    waiting_leave_days = State()
+    waiting_acc_count  = State()
+
+
+@router.callback_query(F.data == "fj:back")
+async def cb_fj_back(cb: types.CallbackQuery):
+    await cb.answer()
+    enabled = db.get_setting("fj_enabled", "0") == "1"
+    leave_days = int(db.get_setting("fj_leave_days", "1"))
+    acc_count  = int(db.get_setting("fj_acc_count", "0"))
+    total      = len(db.get_all_accounts())
+    status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
+    try:
+        await cb.message.edit_text(
+            f"🔗 <b>جوین توی جوین اجباری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"وضعیت: <b>{status_txt}</b>\n"
+            f"⏰ تایم ترک: <b>{leave_days} روز</b>\n"
+            f"🔢 تعداد اکانت: <b>{'همه' if acc_count == 0 else acc_count}</b> از {total}\n\n"
+            f"👇 گزینه مورد نظر:",
+            reply_markup=forced_join_menu(enabled),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "fj:toggle")
+async def cb_fj_toggle(cb: types.CallbackQuery):
+    current = db.get_setting("fj_enabled", "0") == "1"
+    new_val = "0" if current else "1"
+    db.set_setting("fj_enabled", new_val)
+    enabled = new_val == "1"
+    status_txt = "✅ فعال شد" if enabled else "❌ غیرفعال شد"
+    await cb.answer(f"🔛 جوین اجباری {status_txt}", show_alert=True)
+    leave_days = int(db.get_setting("fj_leave_days", "1"))
+    acc_count  = int(db.get_setting("fj_acc_count", "0"))
+    total      = len(db.get_all_accounts())
+    try:
+        await cb.message.edit_text(
+            f"🔗 <b>جوین توی جوین اجباری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"وضعیت: <b>{'✅ فعال' if enabled else '❌ غیرفعال'}</b>\n"
+            f"⏰ تایم ترک: <b>{leave_days} روز</b>\n"
+            f"🔢 تعداد اکانت: <b>{'همه' if acc_count == 0 else acc_count}</b> از {total}\n\n"
+            f"👇 گزینه مورد نظر:",
+            reply_markup=forced_join_menu(enabled),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "fj:settings")
+async def cb_fj_settings(cb: types.CallbackQuery):
+    await cb.answer()
+    enabled    = db.get_setting("fj_enabled", "0") == "1"
+    leave_days = int(db.get_setting("fj_leave_days", "1"))
+    acc_count  = int(db.get_setting("fj_acc_count", "0"))
+    total      = len(db.get_all_accounts())
+    status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
+    try:
+        await cb.message.edit_text(
+            f"⚙️ <b>تنظیمات جوین اجباری</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔛 وضعیت: <b>{status_txt}</b>\n"
+            f"⏰ تایم ترک گروه: <b>{leave_days} روز</b>\n"
+            f"🔢 تعداد اکانت: <b>{'همه (' + str(total) + ')' if acc_count == 0 else str(acc_count)}</b>\n\n"
+            f"👇 گزینه مورد نظر:",
+            reply_markup=forced_join_settings_menu(),
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "fj:set_leave_days")
+async def cb_fj_set_leave_days(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer()
+    cur = int(db.get_setting("fj_leave_days", "1"))
+    await cb.message.answer(
+        f"⏰ <b>تایم ترک گروه</b>\n\n"
+        f"مقدار فعلی: <b>{cur} روز</b>\n\n"
+        f"تعداد روز تا ترک گروه‌های جوین‌شده رو بفرست:\n"
+        f"<code>1</code>  (یک روز)\n"
+        f"<code>7</code>  (یک هفته)\n\n"
+        f"عدد رو بفرست:",
+        reply_markup=cancel_menu(),
+        parse_mode="HTML",
+    )
+    await state.set_state(_FJState.waiting_leave_days)
+
+
+@router.message(StateFilter(_FJState.waiting_leave_days))
+async def fj_set_leave_days(msg: types.Message, state: FSMContext):
+    if not await guard(msg): return
+    raw = (msg.text or "").strip().translate(_FA_DIGITS)
+    if not raw.isdigit() or int(raw) < 1:
+        await msg.answer("❌ عدد معتبر وارد کن (مثال: <code>1</code>)", parse_mode="HTML")
+        return
+    db.set_setting("fj_leave_days", raw)
+    await msg.answer(
+        f"✅ تایم ترک تنظیم شد: <b>{raw} روز</b>",
+        reply_markup=main_menu(), parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data == "fj:set_acc_count")
+async def cb_fj_set_acc_count(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer()
+    cur   = int(db.get_setting("fj_acc_count", "0"))
+    total = len(db.get_all_accounts())
+    await cb.message.answer(
+        f"🔢 <b>تعداد اکانت برای عضویت</b>\n\n"
+        f"کل اکانت‌ها: <b>{total}</b>\n"
+        f"مقدار فعلی: <b>{'همه' if cur == 0 else cur}</b>\n\n"
+        f"تعداد اکانتی که باید عضو بشن رو بفرست.\n"
+        f"<code>0</code> = همه اکانت‌ها\n"
+        f"مثال: <code>5</code>",
+        reply_markup=cancel_menu(),
+        parse_mode="HTML",
+    )
+    await state.set_state(_FJState.waiting_acc_count)
+
+
+@router.message(StateFilter(_FJState.waiting_acc_count))
+async def fj_set_acc_count(msg: types.Message, state: FSMContext):
+    if not await guard(msg): return
+    raw = (msg.text or "").strip().translate(_FA_DIGITS)
+    if not raw.isdigit():
+        await msg.answer("❌ عدد معتبر وارد کن (مثال: <code>5</code> یا <code>0</code> برای همه)", parse_mode="HTML")
+        return
+    db.set_setting("fj_acc_count", raw)
+    label = "همه اکانت‌ها" if raw == "0" else f"{raw} اکانت"
+    await msg.answer(
+        f"✅ تعداد اکانت تنظیم شد: <b>{label}</b>",
+        reply_markup=main_menu(), parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data == "fj:leave_all")
+async def cb_fj_leave_all(cb: types.CallbackQuery):
+    await cb.answer("⏳ شروع ترک همه گروه‌ها و کانال‌ها...")
+    await cb.message.answer(
+        "⏳ <b>در حال ترک همه گروه‌ها و کانال‌ها...</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        parse_mode="HTML",
+    )
+    asyncio.create_task(_fj_leave_all_task(cb))
+
+
+@router.callback_query(F.data == "fj:run")
+async def cb_fj_run(cb: types.CallbackQuery):
+    await cb.answer("⏳ شروع جوین اجباری...")
+    group_id = _get_group_id()
+    if not group_id:
+        await cb.message.answer("❌ ابتدا گروه هدف رو تنظیم کن (منوی گروه هدف).")
+        return
+    await cb.message.answer(
+        "⏳ <b>شروع جوین توی جوین اجباری...</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📌 اکانت‌ها پیام می‌فرستن، ربات @JOINEEJBARIBOT\n"
+        "پیام رو حذف می‌کنه و لینک کانال‌ها رو میده.\n"
+        "سپس اکانت‌ها عضو کانال‌ها میشن.",
+        parse_mode="HTML",
+    )
+    asyncio.create_task(_fj_run_task(cb, group_id))
+
+
+# ─── Task: اجرای جوین اجباری ───
+
+async def _fj_run_task(cb: types.CallbackQuery, group_id):
+    """
+    ۱. هر اکانت توی گروه هدف یک پیام می‌فرسته
+    ۲. منتظر میمونه ربات @JOINEEJBARIBOT پیام بده (با دکمه‌های کانال)
+    ۳. اکانت‌ها عضو کانال‌های دکمه‌ای میشن
+    ۴. بعد از تایم مشخص (fj_leave_days) ترک می‌کنن (scheduler جدا)
+    """
+    from core.engine import make_client
+    from core.entity import resolve_group_entity
+    from telethon.tl.functions.channels import JoinChannelRequest
+    import re as _re2
+
+    leave_days = int(db.get_setting("fj_leave_days", "1"))
+    acc_count  = int(db.get_setting("fj_acc_count", "0"))
+
+    accounts = db.get_all_accounts()
+    if acc_count > 0:
+        accounts = accounts[:acc_count]
+
+    total  = len(accounts)
+    ok     = 0
+    errors = []
+
+    status_msg = await cb.message.answer(
+        f"🔄 <b>پیشرفت: 0/{total}</b>\nدر حال اجرا...",
+        parse_mode="HTML",
+    )
+
+    for i, acc in enumerate(accounts, 1):
+        phone  = acc["phone"]
+        client = None
+        joined_channels = []
+        try:
+            client = make_client(db.get_session(phone), phone=phone)
+            await asyncio.wait_for(client.connect(), timeout=20)
+            if not await client.is_user_authorized():
+                errors.append(f"{phone}: unauthorized")
+                continue
+
+            # ۱. ارسال پیام به گروه هدف
+            entity = await resolve_group_entity(client, group_id, timeout=15)
+            sent_msg = await client.send_message(entity, ".")
+            await asyncio.sleep(3)
+
+            # ۲. گوش دادن به ربات @JOINEEJBARIBOT برای پیام با دکمه
+            bot_msg = None
+            async for message in client.iter_messages(entity, limit=10):
+                sender = getattr(message, "sender", None)
+                username = getattr(sender, "username", "") or ""
+                if username.lower() == "joineejbaribot" and message.buttons:
+                    bot_msg = message
+                    break
+
+            if bot_msg and bot_msg.buttons:
+                # ۳. استخراج لینک‌های کانال از دکمه‌ها
+                for row in bot_msg.buttons:
+                    for btn in row:
+                        url = getattr(btn, "url", None)
+                        if url and "t.me" in url:
+                            try:
+                                # جوین کردن کانال
+                                ch_entity = await client.get_entity(url)
+                                await client(JoinChannelRequest(ch_entity))
+                                joined_channels.append(url)
+                                await asyncio.sleep(2)
+                            except Exception as je:
+                                pass
+
+            # ۴. ثبت در دیتابیس برای ترک بعدی
+            if joined_channels:
+                import json, time
+                leave_at = time.time() + leave_days * 86400
+                existing = db.get_setting("fj_pending_leaves", "[]")
+                try:
+                    pending = json.loads(existing)
+                except Exception:
+                    pending = []
+                for ch in joined_channels:
+                    pending.append({"phone": phone, "channel": ch, "leave_at": leave_at})
+                db.set_setting("fj_pending_leaves", json.dumps(pending))
+
+            ok += 1
+            # آپدیت وضعیت هر ۵ اکانت
+            if i % 5 == 0 or i == total:
+                try:
+                    await status_msg.edit_text(
+                        f"🔄 <b>پیشرفت: {i}/{total}</b>\n"
+                        f"✅ موفق: {ok}\n"
+                        f"❌ خطا: {len(errors)}",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+        except Exception as e:
+            errors.append(f"{phone}: {str(e)[:60]}")
+        finally:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+
+    # گزارش نهایی
+    err_text = ""
+    for e in errors[:5]:
+        err_text += f"\n🔴 <code>{e}</code>"
+    try:
+        await status_msg.edit_text(
+            f"✅ <b>جوین اجباری تموم شد</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ موفق: <b>{ok}</b>\n"
+            f"❌ خطا: <b>{len(errors)}</b>\n"
+            f"👥 کل: <b>{total}</b>\n"
+            f"⏰ ترک بعد از: <b>{leave_days} روز</b>"
+            f"{err_text}",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+# ─── Task: ترک همه گروه‌ها و کانال‌ها ───
+
+async def _fj_leave_all_task(cb: types.CallbackQuery):
+    """همه اکانت‌ها از همه گروه‌ها و کانال‌هایی که عضوشن لف میدن"""
+    from core.engine import make_client
+    from telethon.tl.functions.channels import LeaveChannelRequest
+    from telethon.tl.types import Channel, Chat
+
+    accounts = db.get_all_accounts()
+    total_ok   = 0
+    total_left = 0
+
+    status_msg = await cb.message.answer(
+        f"🔄 <b>در حال ترک گروه‌ها...</b>\n0/{len(accounts)} اکانت",
+        parse_mode="HTML",
+    )
+
+    for i, acc in enumerate(accounts, 1):
+        phone  = acc["phone"]
+        client = None
+        left   = 0
+        try:
+            client = make_client(db.get_session(phone), phone=phone)
+            await asyncio.wait_for(client.connect(), timeout=20)
+            if not await client.is_user_authorized():
+                continue
+
+            async for dialog in client.iter_dialogs():
+                entity = dialog.entity
+                if isinstance(entity, (Channel, Chat)):
+                    try:
+                        await client(LeaveChannelRequest(entity))
+                        left += 1
+                        await asyncio.sleep(1)
+                    except Exception:
+                        pass
+
+            total_ok   += 1
+            total_left += left
+
+            if i % 3 == 0 or i == len(accounts):
+                try:
+                    await status_msg.edit_text(
+                        f"🔄 <b>پیشرفت: {i}/{len(accounts)}</b>\n"
+                        f"🚪 کل ترک‌ها: {total_left}",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+        finally:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+
+    # پاک کردن صف ترک از دیتابیس
+    db.set_setting("fj_pending_leaves", "[]")
+
+    try:
+        await status_msg.edit_text(
+            f"✅ <b>ترک کامل شد</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 اکانت‌های پردازش‌شده: <b>{total_ok}</b>\n"
+            f"🚪 کل گروه‌های ترک‌شده: <b>{total_left}</b>",
+            parse_mode="HTML",
+        )
     except Exception:
         pass
 
