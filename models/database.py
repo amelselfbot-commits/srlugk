@@ -195,7 +195,8 @@ def get_account(phone: str) -> dict | None:
 def get_all_accounts() -> list[dict]:
     sb = _get_client()
     res = sb.table("accounts").select("*").order("id").execute()
-    return res.data
+    # اکانت‌های بدون session رو حذف کن — نه بلاک‌لیست، فقط از pool بیرون نگه‌دار
+    return [r for r in res.data if r.get("session_encrypted")]
 
 
 def get_accounts_by_shift(s: str) -> list[dict]:
@@ -214,7 +215,11 @@ def update_account_status(phone: str, status: str, error: str | None = None, unt
 
 def update_account_shift(phone: str, shift: str):
     sb = _get_client()
-    sb.table("accounts").update({"shift": shift}).eq("phone", phone).execute()
+    # فقط اکانت‌هایی که session دارن آپدیت بشن — جلوگیری از NOT NULL constraint error
+    sb.table("accounts").update({"shift": shift}) \
+      .eq("phone", phone) \
+      .not_.is_("session_encrypted", "null") \
+      .execute()
 
 
 def get_session(phone: str) -> str | None:

@@ -92,6 +92,7 @@ class ClientPool:
             # ═══ Skip dead accounts ═══
             accounts = [a for a in accounts if a.get("status") != "dead"]
             if not accounts:
+                self.ready.set()
                 return
 
             # شیفت‌ها از ستون shift دیتابیس خونده میشن
@@ -133,6 +134,7 @@ class ClientPool:
             await asyncio.gather(*tasks, return_exceptions=True)
             db.debug_log("pool", "init", "DONE", f"connected:{ok[0]}/{n}")
             await asyncio.to_thread(self._safe_sync)
+            self.ready.set()   # ← unlock add_account_live waiters
 
     async def _connect_one(self, phone, force=False):
         if phone in self.blacklist:
