@@ -239,10 +239,11 @@ def cancel_menu() -> InlineKeyboardMarkup:
 
 
 def add_method_menu() -> InlineKeyboardMarkup:
-    """انتخاب روش افزودن اکانت: شماره یا سشن"""
+    """انتخاب روش افزودن اکانت: شماره، سشن متنی، یا فایل سشن"""
     b = InlineKeyboardBuilder()
-    b.button(text="📱 افزودن با شماره",  callback_data="add:method:phone")
-    b.button(text="🔑 افزودن با سشن",    callback_data="add:method:session")
-    b.button(text="❌ انصراف",            callback_data="add:cancel")
+    b.button(text="📱 افزودن با شماره",          callback_data="add:method:phone")
+    b.button(text="🔑 افزودن با String Session",  callback_data="add:method:session")
+    b.button(text="📂 افزودن با فایل .session",   callback_data="add:method:session_file")
+    b.button(text="❌ انصراف",                     callback_data="add:cancel")
     b.adjust(1)
     return b.as_markup()

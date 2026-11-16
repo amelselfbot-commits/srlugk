@@ -1790,6 +1790,18 @@ async def cb_add_method(cb: types.CallbackQuery, state: FSMContext):
         )
         await cb.answer()
 
+    elif method == "session_file":
+        await state.set_state(AddAccount.waiting_session_file)
+        await cb.message.edit_text(
+            "📂 <b>افزودن با فایل .session</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "فایل <code>.session</code> تلتون رو اینجا بفرست.\n\n"
+            "⚠️ فایل باید با <code>API_ID</code> و <code>API_HASH</code> همین بات ساخته شده باشه.",
+            reply_markup=cancel_menu(),
+            parse_mode="HTML",
+        )
+        await cb.answer()
+
     else:
         await cb.answer("❌ روش ناشناخته", show_alert=True)
 
@@ -1882,6 +1894,142 @@ async def add_session(msg: types.Message, state: FSMContext):
             try: await c.disconnect()
             except Exception: pass
         await state.clear()
+
+
+@router.message(StateFilter(AddAccount.waiting_session_file))
+async def add_session_file(msg: types.Message, state: FSMContext, bot: Bot):
+    if not await guard_admin(msg): return
+
+    if not msg.document:
+        await msg.answer("❌ لطفاً یک فایل <code>.session</code> بفرست.", parse_mode="HTML")
+        return
+
+    file_name = msg.document.file_name or ""
+    if not file_name.endswith(".session"):
+        await msg.answer(
+            "❌ فایل باید پسوند <code>.session</code> داشته باشه.",
+            parse_mode="HTML",
+        )
+        return
+
+    await msg.answer("⏳ در حال بررسی فایل سشن...", parse_mode="HTML")
+
+    import tempfile, os, sqlite3
+
+    tmp_path = None
+    c = None
+    try:
+        # دانلود فایل از تلگرام
+        file_info = await bot.get_file(msg.document.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".session", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        await bot.download_file(file_info.file_path, destination=tmp_path)
+
+        # بررسی اعتبار SQLite
+        try:
+            conn = sqlite3.connect(tmp_path)
+            cur  = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+            if not cur.fetchone():
+                raise ValueError("جدول sessions یافت نشد")
+            conn.close()
+        except Exception:
+            await msg.answer(
+                "❌ فایل معتبر نیست یا ساختار آن اشتباه است.",
+                parse_mode="HTML",
+            )
+            await state.clear()
+            return
+
+        # اتصال با TelegramClient از روی فایل
+        from telethon import TelegramClient
+        session_base = tmp_path[:-len(".session")]  # telethon پسوند رو خودش اضافه می‌کنه
+        c = TelegramClient(session_base, Config.API_ID, Config.API_HASH)
+        await asyncio.wait_for(c.connect(), timeout=20)
+
+        if not await c.is_user_authorized():
+            await msg.answer(
+                "❌ <b>سشن منقضی یا نامعتبر است.</b>\n\nاکانت لاگ‌اوت شده.",
+                parse_mode="HTML",
+            )
+            await c.disconnect()
+            await state.clear()
+            return
+
+        me    = await c.get_me()
+        phone = getattr(me, "phone", None)
+        if phone and not phone.startswith("+"):
+            phone = "+" + phone
+        phone_key = phone or f"id:{me.id}"
+
+        # بررسی تکراری نبودن
+        try:
+            exists = db.get_account(phone_key)
+        except Exception:
+            exists = None
+
+        if exists:
+            await msg.answer(
+                f"⚠️ این اکانت (<code>{phone_key}</code>) قبلاً ثبت شده.",
+                parse_mode="HTML",
+            )
+            await c.disconnect()
+            await state.clear()
+            return
+
+        await _join_group(c)
+
+        # ذخیره به صورت StringSession در DB
+        ss = c.session.save()
+        await c.disconnect()
+
+        acc_id = db.add_account(phone_key, ss)
+
+        pool_ok = False
+        try:
+            from core.pool import POOL
+            pool_ok = await asyncio.wait_for(POOL.add_account_live(phone_key), timeout=40) is not None
+        except Exception as _pe:
+            db.debug_log("handlers", "pool_add_session_file", "WARN", f"{type(_pe).__name__}: {_pe}")
+
+        await msg.answer(
+            f"✅ <b>اکانت با فایل سشن اضافه شد!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 نام: <b>{me.first_name}</b>\n"
+            f"🆔 یوزرنیم: @{me.username or 'ندارد'}\n"
+            f"📱 شماره: <code>{phone or 'ناشناس'}</code>\n"
+            f"🎫 شناسه: <code>{acc_id}</code>\n"
+            f"👥 عضو گروه: ✅\n"
+            f"🔌 اتصال به pool: {'✅' if pool_ok else '⚠️ بعداً خودکار وصل میشه'}",
+            reply_markup=main_menu(),
+            parse_mode="HTML",
+        )
+        await state.clear()
+
+    except asyncio.TimeoutError:
+        await msg.answer("❌ <b>Timeout</b>\nسرور تلگرام پاسخ نداد.", parse_mode="HTML")
+        if c:
+            try: await c.disconnect()
+            except Exception: pass
+        await state.clear()
+    except Exception as e:
+        log.exception(f"add_session_file: {e}")
+        await msg.answer(
+            f"❌ <b>خطا در بارگذاری فایل سشن</b>:\n<code>{str(e)[:200]}</code>",
+            parse_mode="HTML",
+        )
+        if c:
+            try: await c.disconnect()
+            except Exception: pass
+        await state.clear()
+    finally:
+        # پاکسازی فایل‌های موقت
+        for ext in ("", ".session"):
+            path = (tmp_path[:-len(".session")] if tmp_path and tmp_path.endswith(".session") else tmp_path or "") + ext
+            if path and os.path.exists(path):
+                try: os.remove(path)
+                except Exception: pass
 
 
 # FSM: افزودن اکانت
