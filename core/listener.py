@@ -11,7 +11,7 @@ from core.engine import instant_view
 from core.pool import POOL
 from core.entity import resolve_group_entity
 from core.view_guard import VIEW_GUARD
-from core.fj_forwarder import FJ_FORWARD_QUEUE, is_forward_enabled, FJ_FORWARDER
+
 from telethon.errors import FloodWaitError
 
 _VIEW_PAUSED = False
@@ -52,8 +52,8 @@ class MultiTargetListener:
             await POOL.init()
 
         try:
-            from core.scheduler import get_scheduler_instance
-            s = get_scheduler_instance()
+            from core.smart_scheduler import get_smart_scheduler
+            s = get_smart_scheduler()
             s.start()
             self._scheduler = s
         except Exception as e:
@@ -62,9 +62,6 @@ class MultiTargetListener:
         for i in range(self.num_workers):
             w = asyncio.create_task(self._worker(i))
             self.workers.append(w)
-        # ─── FJ Forwarder ───
-        FJ_FORWARDER.start()
-
         self._warm_task = asyncio.create_task(self._warm_loop())
 
         while self.is_running:
@@ -139,12 +136,7 @@ class MultiTargetListener:
                 self.queue.put_nowait((m.id, ts))
             except asyncio.QueueFull:
                 pass
-            # ─── FJ Forward: پیام رو به forwarder هم اطلاع بده ───
-            if is_forward_enabled():
-                try:
-                    FJ_FORWARD_QUEUE.put_nowait(m.id)
-                except asyncio.QueueFull:
-                    pass
+
         if new_msgs:
             db.debug_log("listener", "queue_add", "OK",
                          f"+{len(new_msgs)} | queue: {self.queue.qsize()}")
@@ -407,11 +399,11 @@ class GroupListener:
 
         # ── scheduler شیفت — تنها نقطه‌ای که باید start بشه ──
         try:
-            from core.scheduler import get_scheduler_instance
-            _sched = get_scheduler_instance()
+            from core.smart_scheduler import get_smart_scheduler
+            _sched = get_smart_scheduler()
             _sched.start()
             self._scheduler = _sched
-            db.debug_log("group_listener", "scheduler", "OK", "shift rotation started")
+            db.debug_log("group_listener", "scheduler", "OK", "shift rotation started (smart)")
         except Exception as _se:
             db.debug_log("group_listener", "scheduler", "ERROR", str(_se))
 

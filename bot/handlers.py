@@ -23,7 +23,7 @@ from bot.keyboards import (
     cancel_menu, view_toggle_menu, shift_select_menu, shift_timing_menu,
     use_members_menu, num_shifts_menu,
     forced_join_menu, forced_join_settings_menu,
-    add_method_menu,
+    add_method_menu, smart_scheduler_menu,
 )
 from bot.states import AddAccount, SetShiftTiming, SetGroup, UseMembers, StartBotWizard
 
@@ -520,8 +520,10 @@ from aiogram.fsm.state import State, StatesGroup as _SG
 
 
 class _FJState(_SG):
-    waiting_leave_days = State()
-    waiting_acc_count  = State()
+    waiting_leave_days   = State()
+    waiting_acc_count    = State()
+    waiting_join_interval = State()
+    waiting_batch_size   = State()
 
 
 @router.callback_query(F.data == "fj:back")
@@ -576,61 +578,89 @@ async def cb_fj_toggle(cb: types.CallbackQuery):
 @router.callback_query(F.data == "fj:settings")
 async def cb_fj_settings(cb: types.CallbackQuery):
     await cb.answer()
-    enabled    = db.get_setting("fj_enabled", "0") == "1"
-    leave_days = int(db.get_setting("fj_leave_days", "1"))
-    acc_count  = int(db.get_setting("fj_acc_count", "0"))
-    total      = len(db.get_all_accounts())
-    status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
+    enabled          = db.get_setting("fj_enabled", "0") == "1"
+    leave_days       = int(db.get_setting("fj_leave_days", "1"))
+    acc_count        = int(db.get_setting("fj_acc_count", "0"))
+    join_interval_min = int(db.get_setting("fj_join_interval_min", "10"))
+    batch_size       = int(db.get_setting("fj_batch_size", "5"))
+    total            = len(db.get_all_accounts())
+    status_txt       = "✅ فعال" if enabled else "❌ غیرفعال"
     try:
         await cb.message.edit_text(
             f"⚙️ <b>تنظیمات جوین اجباری</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔛 وضعیت: <b>{status_txt}</b>\n"
+            f"⏱ فاصله بین هر دور: <b>{join_interval_min} دقیقه</b>\n"
+            f"🔢 اکانت هر دور: <b>{batch_size} تا</b>\n"
             f"⏰ تایم ترک گروه: <b>{leave_days} روز</b>\n"
             f"🔢 تعداد اکانت: <b>{'همه (' + str(total) + ')' if acc_count == 0 else str(acc_count)}</b>\n\n"
             f"👇 گزینه مورد نظر:",
             reply_markup=forced_join_settings_menu(
-                fwd_enabled=db.get_setting("fj_forward_enabled","0")=="1"),
+                join_interval_min=join_interval_min,
+                batch_size=batch_size,
+            ),
             parse_mode="HTML",
         )
     except Exception:
         pass
 
 
-@router.callback_query(F.data == "fj:toggle_forward")
-async def cb_fj_toggle_forward(cb: types.CallbackQuery):
-    from core.fj_forwarder import is_forward_enabled, FJ_FORWARDER
-    current = is_forward_enabled()
-    new_val = "0" if current else "1"
-    db.set_setting("fj_forward_enabled", new_val)
-    fwd_enabled = new_val == "1"
-    if fwd_enabled:
-        FJ_FORWARDER.start()
-        label = "✅ فوروارد فعال شد"
-    else:
-        FJ_FORWARDER.stop()
-        label = "❌ فوروارد غیرفعال شد"
-    await cb.answer(f"📤 {label}", show_alert=True)
-    enabled    = db.get_setting("fj_enabled", "0") == "1"
-    leave_days = int(db.get_setting("fj_leave_days", "1"))
-    acc_count  = int(db.get_setting("fj_acc_count", "0"))
-    total      = len(db.get_all_accounts())
-    status_txt = "✅ فعال" if enabled else "❌ غیرفعال"
-    fwd_txt    = "✅ فعال" if fwd_enabled else "❌ غیرفعال"
-    try:
-        await cb.message.edit_text(
-            f"⚙️ <b>تنظیمات جوین اجباری</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🔛 وضعیت جوین: <b>{status_txt}</b>\n"
-            f"📤 فوروارد پست‌ها: <b>{fwd_txt}</b>\n"
-            f"⏰ تایم ترک گروه: <b>{leave_days} روز</b>\n"
-            f"🔢 تعداد اکانت: <b>{'همه (' + str(total) + ')' if acc_count == 0 else str(acc_count)}</b>\n\n"
-            f"👇 گزینه مورد نظر:",
-            reply_markup=forced_join_settings_menu(fwd_enabled=fwd_enabled),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+@router.callback_query(F.data == "fj:set_join_interval")
+async def cb_fj_set_join_interval(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer()
+    cur = int(db.get_setting("fj_join_interval_min", "10"))
+    await cb.message.answer(
+        f"⏱ <b>فاصله بین هر دور جوین (دقیقه)</b>\n\n"
+        f"مقدار فعلی: <b>{cur} دقیقه</b>\n\n"
+        f"عدد دقیقه رو بفرست. مثال: <code>10</code>",
+        reply_markup=cancel_menu(),
+        parse_mode="HTML",
+    )
+    await state.set_state(_FJState.waiting_join_interval)
+
+
+@router.message(StateFilter(_FJState.waiting_join_interval))
+async def fj_set_join_interval(msg: types.Message, state: FSMContext):
+    if not await guard(msg): return
+    raw = (msg.text or "").strip().translate(_FA_DIGITS)
+    if not raw.isdigit() or int(raw) < 1:
+        await msg.answer("❌ عدد معتبر وارد کن (حداقل 1 دقیقه). مثال: <code>10</code>", parse_mode="HTML")
+        return
+    db.set_setting("fj_join_interval_min", raw)
+    await msg.answer(
+        f"✅ فاصله جوین تنظیم شد: <b>{raw} دقیقه</b>",
+        reply_markup=main_menu(), parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data == "fj:set_batch_size")
+async def cb_fj_set_batch_size(cb: types.CallbackQuery, state: FSMContext):
+    await cb.answer()
+    cur = int(db.get_setting("fj_batch_size", "5"))
+    await cb.message.answer(
+        f"🔢 <b>تعداد اکانت در هر دور جوین</b>\n\n"
+        f"مقدار فعلی: <b>{cur} اکانت</b>\n\n"
+        f"عدد رو بفرست. مثال: <code>5</code>",
+        reply_markup=cancel_menu(),
+        parse_mode="HTML",
+    )
+    await state.set_state(_FJState.waiting_batch_size)
+
+
+@router.message(StateFilter(_FJState.waiting_batch_size))
+async def fj_set_batch_size(msg: types.Message, state: FSMContext):
+    if not await guard(msg): return
+    raw = (msg.text or "").strip().translate(_FA_DIGITS)
+    if not raw.isdigit() or int(raw) < 1:
+        await msg.answer("❌ عدد معتبر وارد کن (حداقل 1). مثال: <code>5</code>", parse_mode="HTML")
+        return
+    db.set_setting("fj_batch_size", raw)
+    await msg.answer(
+        f"✅ تعداد اکانت هر دور تنظیم شد: <b>{raw} اکانت</b>",
+        reply_markup=main_menu(), parse_mode="HTML",
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "fj:set_leave_days")
@@ -1222,7 +1252,41 @@ async def show_settings(msg: types.Message):
 async def cb_settings(cb: types.CallbackQuery, state: FSMContext):
     data = cb.data.split(":")[1]
 
-    if data == "shift_timing":
+    if data == "smart_scheduler":
+        from core.smart_scheduler import get_smart_scheduler, get_mode, _SMART_STATE
+        from core.pool import POOL
+        sched = get_smart_scheduler()
+        mode  = get_mode()
+
+        if mode == "auto":
+            nxt_dt = _SMART_STATE.get("next_swap_at")
+            rem    = max(0, (nxt_dt - __import__("datetime").datetime.utcnow()).total_seconds()) if nxt_dt else 0
+            comp_n = _SMART_STATE.get("computed_shifts") or "؟"
+            comp_i = _SMART_STATE.get("computed_interval_sec")
+            comp_i_txt = f"{comp_i//60} دقیقه" if comp_i else "در حال یادگیری..."
+            cycles = _SMART_STATE.get("learning_cycles", 0)
+            text = (
+                f"🤖 <b>حالت خودکار فعاله</b>\n\n"
+                f"📍 شیفت فعال: <b>{POOL.active_shift}</b> / {POOL.num_shifts}\n"
+                f"⏳ چرخش بعدی: <b>{int(rem)//60}:{int(rem)%60:02d}</b>\n"
+                f"🎯 شیفت بهینه: <b>{comp_n}</b>\n"
+                f"⏱ فاصله بهینه: <b>{comp_i_txt}</b>\n"
+                f"🔁 چرخه یادگیری: <b>{cycles}</b>"
+            )
+        else:
+            text = (
+                f"🔧 <b>حالت دستی فعاله</b>\n\n"
+                f"📍 شیفت فعال: <b>{POOL.active_shift}</b> / {POOL.num_shifts}\n\n"
+                f"برای چرخش خودکار بر اساس لیمیت واقعی اکانت‌ها،\n"
+                f"حالت خودکار رو فعال کن."
+            )
+        await cb.message.edit_text(
+            text,
+            reply_markup=smart_scheduler_menu(mode),
+            parse_mode="HTML",
+        )
+
+    elif data == "shift_timing":
         mn = int(db.get_setting("shift_min_sec", Config.SHIFT_MIN_SEC)) // 60
         mx = int(db.get_setting("shift_max_sec", Config.SHIFT_MAX_SEC)) // 60
         await cb.message.edit_text(
@@ -1524,25 +1588,104 @@ async def cb_shift_select(cb: types.CallbackQuery):
 
 
 # ─────────────────────────────────────────────────────────
+# Callbacks: مدیریت شیفت هوشمند  (sched:*)
+# ─────────────────────────────────────────────────────────
+@router.callback_query(F.data.startswith("sched:"))
+async def cb_smart_sched(cb: types.CallbackQuery):
+    if not await guard(cb.message): return
+    action = cb.data.split(":")[1]
+    from core.smart_scheduler import get_smart_scheduler, get_mode, set_mode, _SMART_STATE
+
+    sched = get_smart_scheduler()
+
+    if action == "noop":
+        await cb.answer()
+        return
+
+    elif action == "set_auto":
+        set_mode("auto")
+        from core.pool import POOL
+        await cb.answer("🤖 خودکار فعال شد")
+        await cb.message.edit_text(
+            f"🤖 <b>حالت خودکار فعاله</b>\n\n"
+            f"📍 شیفت فعال: <b>{POOL.active_shift}</b> / {POOL.num_shifts}\n"
+            f"⏳ چرخش بعدی: <b>در حال محاسبه...</b>\n"
+            f"🎯 شیفت بهینه: <b>در حال یادگیری...</b>\n"
+            f"⏱ فاصله بهینه: <b>در حال یادگیری...</b>\n"
+            f"🔁 چرخه یادگیری: <b>0</b>",
+            reply_markup=smart_scheduler_menu("auto"),
+            parse_mode="HTML",
+        )
+
+    elif action == "set_manual":
+        set_mode("manual")
+        from core.pool import POOL
+        await cb.answer("🔧 دستی فعال شد")
+        await cb.message.edit_text(
+            f"🔧 <b>حالت دستی فعاله</b>\n\n"
+            f"📍 شیفت فعال: <b>{POOL.active_shift}</b> / {POOL.num_shifts}\n\n"
+            f"برای چرخش خودکار بر اساس لیمیت واقعی اکانت‌ها،\n"
+            f"حالت خودکار رو فعال کن.",
+            reply_markup=smart_scheduler_menu("manual"),
+            parse_mode="HTML",
+        )
+
+    elif action == "stats":
+        txt = sched.status_text()
+        await cb.message.edit_text(
+            f"📊 <b>آمار شیفت هوشمند</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n{txt}",
+            reply_markup=smart_scheduler_menu(get_mode()),
+            parse_mode="HTML",
+        )
+        await cb.answer()
+
+    elif action == "rotate_now":
+        old_shift = sched._get_pool().active_shift
+        new_shift = await sched.rotate_now()
+        await cb.answer(f"🔄 شیفت {old_shift}→{new_shift} چرخید", show_alert=True)
+        await cb.message.edit_text(
+            f"🔄 <b>چرخش انجام شد</b>\n\n"
+            f"شیفت قبلی: <b>{old_shift}</b>\n"
+            f"شیفت جدید: <b>{new_shift}</b>",
+            reply_markup=smart_scheduler_menu(get_mode()),
+            parse_mode="HTML",
+        )
+
+    elif action == "reset_learning":
+        _SMART_STATE["metrics"] = {}
+        _SMART_STATE["computed_shifts"] = None
+        _SMART_STATE["computed_interval_sec"] = None
+        _SMART_STATE["learning_cycles"] = 0
+        _SMART_STATE["last_status_msg"] = ""
+        await cb.answer("🗑 داده‌های یادگیری ریست شد", show_alert=True)
+        await cb.message.edit_text(
+            "🗑 <b>داده یادگیری ریست شد</b>\n\n"
+            "ربات از صفر شروع به جمع‌آوری داده می‌کنه.",
+            reply_markup=smart_scheduler_menu(get_mode()),
+            parse_mode="HTML",
+        )
+
+    else:
+        await cb.answer()
+
+
+# ─────────────────────────────────────────────────────────
 # چرخش دستی
 # ─────────────────────────────────────────────────────────
 @router.message(F.text.startswith("🔄"))
 async def manual_rotate(msg: types.Message):
     if not await guard(msg): return
     try:
-        from core.scheduler import get_scheduler_instance, _STATE
-        s   = get_scheduler_instance()
-        old = s._current_shift
+        from core.smart_scheduler import get_smart_scheduler
+        s   = get_smart_scheduler()
+        old = s._get_pool().active_shift
         new = await s.rotate_now()
-        res = _STATE.get("last_activate_result") or {}
-        connected = res.get("connected", "?")
-        total     = res.get("total", "?")
+        from core.smart_scheduler import _SMART_STATE
         await msg.answer(
             f"🔄 <b>چرخش انجام شد</b>\n\n"
             f"🅰️ شیفت قبلی: <b>{old}</b>\n"
             f"🅱️ شیفت جدید: <b>{new}</b>\n"
-            f"🔌 متصل: <b>{connected}/{total}</b>\n"
-            f"📊 کل چرخش‌های موفق: <b>{_STATE.get('total_swap_count', 0)}</b>",
+            f"📊 کل چرخش‌های موفق: <b>{_SMART_STATE.get('swap_count', 0)}</b>",
             parse_mode="HTML",
         )
     except Exception as e:
@@ -1609,8 +1752,8 @@ async def cb_accounts(cb: types.CallbackQuery, state: FSMContext):
         )
 
     elif action == "rotate":
-        from core.scheduler import get_scheduler_instance, _STATE
-        s = get_scheduler_instance()
+        from core.smart_scheduler import get_smart_scheduler
+        s = get_smart_scheduler()
         await s.rotate_now()
         await cb.answer("🔄 چرخش انجام شد", show_alert=True)
         await cb.message.edit_text(_status_text(), reply_markup=status_menu(), parse_mode="HTML")
@@ -1701,35 +1844,44 @@ async def cb_stats(cb: types.CallbackQuery):
         )
 
     elif data == "shift":
-        from core.scheduler import get_scheduler_instance, _STATE
+        from core.smart_scheduler import get_smart_scheduler, get_mode, _SMART_STATE
         from core.pool import POOL
-        cur    = POOL.active_shift
-        nxt_dt = _STATE.get("next_swap_at")
+        sched = get_smart_scheduler()
+        cur   = POOL.active_shift
+        mode  = get_mode()
+        nxt_dt = _SMART_STATE.get("next_swap_at")
         nxt    = nxt_dt.strftime("%H:%M:%S") if nxt_dt else "?"
-        last_iv     = _STATE.get("last_interval", 0)
-        total_swaps = _STATE.get("total_swap_count", 0)
-        auto_swaps  = _STATE.get("swap_count", 0)
-        manual_swaps = _STATE.get("manual_swap_count", 0)
-        last_swap_at = _STATE.get("last_swap_at") or "هنوز نشده"
-        res         = _STATE.get("last_activate_result") or {}
-        connected   = res.get("connected", "?")
-        total_acc   = res.get("total", "?")
-        act_at      = res.get("at", "?")
-        mn = int(db.get_setting("shift_min_sec", Config.SHIFT_MIN_SEC)) // 60
-        mx = int(db.get_setting("shift_max_sec", Config.SHIFT_MAX_SEC)) // 60
+        total_swaps  = _SMART_STATE.get("swap_count", 0)
+        last_swap_at = _SMART_STATE.get("last_swap_at") or "هنوز نشده"
+        mode_label   = "🤖 خودکار" if mode == "auto" else "🔧 دستی"
+
+        # خلاصه یادگیری
+        learn_lines = []
+        for sid, m in _SMART_STATE.get("metrics", {}).items():
+            if m.has_data:
+                learn_lines.append(
+                    f"  شیفت {sid}: لیمیت≈{m.avg_limit_sec/60:.1f}م "
+                    f"ریکاوری≈{m.avg_recovery_sec/60:.1f}م"
+                )
+        learn_txt = "\n".join(learn_lines) if learn_lines else "  هنوز داده‌ای نیست"
+
+        comp_shifts   = _SMART_STATE.get("computed_shifts", "؟")
+        comp_interval = _SMART_STATE.get("computed_interval_sec")
+        comp_iv_txt   = f"{comp_interval//60} دقیقه" if comp_interval else "؟"
+
         await cb.message.edit_text(
-            f"🔄 <b>وضعیت چرخه</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🟢 شیفت فعال: <b>{cur}</b>\n"
-            f"⏰ swap بعدی: <b>{nxt}</b>\n"
-            f"⏱️ آخرین بازه: <b>{last_iv}s</b>\n"
-            f"📊 تنظیم فعلی: <b>{mn}-{mx} دقیقه</b>\n\n"
+            f"🔄 <b>وضعیت چرخه شیفت</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⚙️ حالت: <b>{mode_label}</b>\n"
+            f"🟢 شیفت فعال: <b>{cur}</b> / {POOL.num_shifts}\n"
+            f"⏰ چرخش بعدی: <b>{nxt}</b>\n"
+            f"🔁 کل چرخش‌ها: <b>{total_swaps}</b>\n"
+            f"🕐 آخرین چرخش: <b>{last_swap_at}</b>\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ <b>چرخش‌های موفق</b>\n"
-            f"  🔁 کل: <b>{total_swaps}</b>\n"
-            f"  🤖 خودکار: <b>{auto_swaps}</b>\n"
-            f"  🖐 دستی: <b>{manual_swaps}</b>\n"
-            f"  🕐 آخرین چرخش: <b>{last_swap_at}</b>\n\n"
-            f"🔌 <b>آخرین activate</b>: <b>{connected}/{total_acc}</b> متصل (ساعت {act_at})",
+            f"🧠 <b>یادگیری هوشمند</b>\n"
+            f"  چرخه‌های یادگیری: <b>{_SMART_STATE.get('learning_cycles', 0)}</b>\n"
+            f"  شیفت بهینه: <b>{comp_shifts}</b>\n"
+            f"  فاصله بهینه: <b>{comp_iv_txt}</b>\n"
+            f"{learn_txt}",
             reply_markup=stats_menu(), parse_mode="HTML",
         )
 

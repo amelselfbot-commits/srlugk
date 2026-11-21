@@ -41,16 +41,16 @@ def forced_join_menu(enabled: bool) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def forced_join_settings_menu(fwd_enabled: bool = False) -> InlineKeyboardMarkup:
+def forced_join_settings_menu(join_interval_min: int = 10, batch_size: int = 5) -> InlineKeyboardMarkup:
     """منوی تنظیمات جوین توی جوین اجباری"""
     b = InlineKeyboardBuilder()
-    fwd_lbl = "✅ فوروارد فعال" if fwd_enabled else "❌ فوروارد غیرفعال"
-    b.button(text="🔛 خاموش/روشن جوین",          callback_data="fj:toggle")
-    b.button(text=f"📤 فوروارد پست‌ها: {fwd_lbl}",  callback_data="fj:toggle_forward")
-    b.button(text="⏰ تایم ترک گروه (به روز)",      callback_data="fj:set_leave_days")
-    b.button(text="🔢 تعداد اکانت برای عضویت",      callback_data="fj:set_acc_count")
-    b.button(text="🚪 ترک همه گروه‌ها/کانال‌ها",     callback_data="fj:leave_all")
-    b.button(text="🔙 برگشت",                       callback_data="fj:back")
+    b.button(text="🔛 خاموش/روشن جوین",                        callback_data="fj:toggle")
+    b.button(text=f"⏱ فاصله جوین: {join_interval_min} دقیقه",  callback_data="fj:set_join_interval")
+    b.button(text=f"🔢 اکانت هر دور: {batch_size} تا",          callback_data="fj:set_batch_size")
+    b.button(text="⏰ تایم ترک گروه (به روز)",                   callback_data="fj:set_leave_days")
+    b.button(text="🔢 تعداد اکانت برای عضویت",                   callback_data="fj:set_acc_count")
+    b.button(text="🚪 ترک همه گروه‌ها/کانال‌ها",                  callback_data="fj:leave_all")
+    b.button(text="🔙 برگشت",                                    callback_data="fj:back")
     b.adjust(1)
     return b.as_markup()
 
@@ -136,14 +136,31 @@ def stats_menu() -> InlineKeyboardMarkup:
 
 def settings_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="⏱️ بازه تایم شیفت",    callback_data="set:shift_timing")
-    b.button(text="🔢 انتخاب شیفت فعال",  callback_data="set:shift_active")
-    b.button(text="🔢 تعداد شیفت‌ها",      callback_data="set:num_shifts")
-    b.button(text="🛡️ وضعیت نگهبان",      callback_data="set:guardian")
-    b.button(text="💾 بکاپ",               callback_data="set:backup")
-    b.button(text="🔒 تنظیمات ضد لیمیت",  callback_data="set:viewguard")
-    b.button(text="🔙 برگشت",              callback_data="menu:main")
+    b.button(text="🤖 مدیریت شیفت هوشمند",  callback_data="set:smart_scheduler")
+    b.button(text="⏱️ بازه تایم شیفت",       callback_data="set:shift_timing")
+    b.button(text="🔢 انتخاب شیفت فعال",     callback_data="set:shift_active")
+    b.button(text="🔢 تعداد شیفت‌ها",         callback_data="set:num_shifts")
+    b.button(text="🛡️ وضعیت نگهبان",         callback_data="set:guardian")
+    b.button(text="💾 بکاپ",                  callback_data="set:backup")
+    b.button(text="🔒 تنظیمات ضد لیمیت",     callback_data="set:viewguard")
+    b.button(text="🔙 برگشت",                 callback_data="menu:main")
     b.adjust(2)
+    return b.as_markup()
+
+
+def smart_scheduler_menu(mode: str) -> InlineKeyboardMarkup:
+    """منوی مدیریت شیفت هوشمند"""
+    b = InlineKeyboardBuilder()
+    if mode == "auto":
+        # حالت خودکار — فقط سه دکمه ضروری
+        b.button(text="📊 آمار یادگیری",        callback_data="sched:stats")
+        b.button(text="🔧 رفتن به حالت دستی",   callback_data="sched:set_manual")
+        b.button(text="🗑 ریست یادگیری",         callback_data="sched:reset_learning")
+    else:
+        # حالت دستی — یه دکمه فعال‌سازی
+        b.button(text="🤖 فعال کردن حالت خودکار", callback_data="sched:set_auto")
+    b.button(text="🔙 برگشت به تنظیمات",        callback_data="menu:settings")
+    b.adjust(1)
     return b.as_markup()
 
 
