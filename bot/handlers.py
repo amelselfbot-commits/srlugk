@@ -486,7 +486,7 @@ async def cb_use_members(cb: types.CallbackQuery, state: FSMContext):
             f"🔢 تعداد اکانت: <b>{'همه' if acc_count == 0 else acc_count}</b> از {total}\n\n"
             f"با کلیک روی «اجرای جوین اجباری» همه اکانت‌ها\n"
             f"توی گروه هدف پیام می‌دن، پیامشون حذف میشه\n"
-            f"و ربات @JOINEEJBARIBOT پیام عضویت اجباری میده.\n"
+            f"و ربات @vornixbazarbot پیام عضویت اجباری میده.\n"
             f"سپس اکانت‌ها عضو کانال‌های دکمه‌ای میشن و\n"
             f"بعد از {leave_days} روز لف میدن.\n\n"
             f"👇 گزینه مورد نظر:",
@@ -750,7 +750,7 @@ async def cb_fj_run(cb: types.CallbackQuery):
     await cb.message.answer(
         "⏳ <b>شروع جوین توی جوین اجباری...</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📌 اکانت‌ها پیام می‌فرستن، ربات @JOINEEJBARIBOT\n"
+        "📌 اکانت‌ها پیام می‌فرستن، ربات @vornixbazarbot\n"
         "پیام رو حذف می‌کنه و لینک کانال‌ها رو میده.\n"
         "سپس اکانت‌ها عضو کانال‌ها میشن.",
         parse_mode="HTML",
@@ -763,7 +763,7 @@ async def cb_fj_run(cb: types.CallbackQuery):
 async def _fj_run_task(cb: types.CallbackQuery, group_id):
     """
     ۱. هر اکانت توی گروه هدف یک پیام می‌فرسته
-    ۲. منتظر میمونه ربات @JOINEEJBARIBOT پیام بده (با دکمه‌های کانال)
+    ۲. منتظر میمونه ربات @vornixbazarbot پیام بده (با دکمه‌های کانال)
     ۳. اکانت‌ها عضو کانال‌های دکمه‌ای میشن
     ۴. بعد از تایم مشخص (fj_leave_days) ترک می‌کنن (scheduler جدا)
     """
@@ -804,12 +804,12 @@ async def _fj_run_task(cb: types.CallbackQuery, group_id):
             sent_msg = await client.send_message(entity, ".")
             await asyncio.sleep(3)
 
-            # ۲. گوش دادن به ربات @JOINEEJBARIBOT برای پیام با دکمه
+            # ۲. گوش دادن به ربات @vornixbazarbot برای پیام با دکمه
             bot_msg = None
             async for message in client.iter_messages(entity, limit=10):
                 sender = getattr(message, "sender", None)
                 username = getattr(sender, "username", "") or ""
-                if username.lower() == "joineejbaribot" and message.buttons:
+                if username.lower() == "vornixbazarbot" and message.buttons:
                     bot_msg = message
                     break
 
